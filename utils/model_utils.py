@@ -8,18 +8,25 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 from transformers.models.gptj.modeling_gptj import GPTJForCausalLM
 from transformers.models.llama.modeling_llama import LlamaForCausalLM
 from transformers.models.mistral.modeling_mistral import MistralForCausalLM
+from transformers.models.gemma.modeling_gemma import GemmaForCausalLM  # Add this import
 from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 logging.getLogger().setLevel(logging.INFO)
+# torch._dynamo.config.suppress_errors = True
+
 
 
 MODEL_IDENITFIER = {
-    'gpt2': 'gpt2-medium',
+    'gpt2-small': 'gpt2', # 124M params
+    'gpt2-medium': 'gpt2-medium',
     'mistral': 'mistralai/Mistral-7B-v0.1',
     'zephyr-sft': 'HuggingFaceH4/mistral-7b-sft-beta',
     'zephyr': 'HuggingFaceH4/zephyr-7b-beta',
     'gptj': 'EleutherAI/gpt-j-6B',
     'opt': 'facebook/opt-6.7b',
+    'gemma-2-2b': 'google/gemma-2-2b',
+    'gemma-2-2b-it': 'google/gemma-2-2b-it',
+    'gemma-2-2b-merged': 'vonjack/gemma2-2b-merged'
 }
 
 
@@ -36,8 +43,13 @@ def load_large_model(model_id, quantize=False, add_peft=False, hf_token=None):
         hf_token = os.environ['HF_TOKEN']
 
     model_path = MODEL_IDENITFIER[model_id]
-    dtype = torch.float32 if model_id == 'gpt2' else torch.float16
-
+    dtype = torch.float16
+    if model_id in ['gpt2-small', 'gpt2-medium']:
+        dtype = torch.float32
+    # dtype = torch.float32 if model_id == 'gpt2' else torch.float16
+    print(f"HF_TOKEN exists: {'HF_TOKEN' in os.environ}")
+    print(f"Token validity: {bool(os.environ.get('HF_TOKEN'))}")
+    print(f'token: {hf_token}') # lol empty?
     tokenizer = AutoTokenizer.from_pretrained(model_path, model_max_length=512,
                                               cache_dir=os.path.join(os.environ['HF_HOME'], 'hub'), token=hf_token)
 
@@ -54,15 +66,25 @@ def load_large_model(model_id, quantize=False, add_peft=False, hf_token=None):
         )
     else:
         quantization_config = None
-
+    
+    print(f'model id,  path in model_utils/load_large_model: {model_id, model_path}')
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         device_map="auto",
+        # device_map={"": "cpu"}, # cpu lol
         torch_dtype=dtype,  # Non quantized weights are torch.float16 by default
         cache_dir=os.path.join(os.environ['HF_HOME'], 'hub'),
         token=hf_token,
-        quantization_config=quantization_config,
+        quantization_config=quantization_config
+        # attn_implementation="eager" # gemma
     )
+
+    # if torch.cuda.is_available():
+    #     model = model.to('cuda')
+    # else:
+    # model = model.to(torch.float32)  # Fallback to float32 on CPU
+
+    print(f'model in model_utils/load_large_model: {model}')
 
     if add_peft:
         model = prepare_model_for_kbit_training(model)  # preprocess the quantized model for training
@@ -100,6 +122,12 @@ def get_model_category(model):
         return get_model_category(model.model)
     if isinstance(model, GPT2LMHeadModel):
         return 'gpt2'
+    # Update Gemma check to use config instead of class
+    if "gemma" in model.config.model_type.lower():
+        return 'gemma'
+    # For older versions that use Gemma2 classes
+    if model.__class__.__name__ in ["Gemma2ForCausalLM", "GemmaForCausalLM"]:
+        return 'gemma'
 
     raise ValueError('Unsupported model. Only GPT2 or LLaMA like architectures currently supported.')
 
@@ -111,7 +139,7 @@ def get_num_transformer_layers(model):
     :return: Int
     """
     model_category = get_model_category(model)
-    if model_category in ['llama', 'mistral']:
+    if model_category in ['llama', 'mistral', 'gemma']: # apparently gemma?
         return len(model.model.layers)          # 32
     elif model_category == 'opt':
         return len(model.model.decoder.layers)  # 32
@@ -126,7 +154,7 @@ def get_hidden_dim(model):
     :return: Int
     """
     model_category = get_model_category(model)
-    if model_category in ['llama', 'mistral', 'opt']:
+    if model_category in ['llama', 'mistral', 'opt', 'gemma']:
         return model.config.hidden_size  # 4096
     else:
         return model.config.n_embd       # 1024 / 4096 for GPT-2 / GPT-J
@@ -141,7 +169,7 @@ def get_model_max_len(model):
     model_category = get_model_category(model)
     if model_category in ['gpt2', 'gptj']:
         return model.config.n_positions
-    elif model_category in ['llama', 'mistral', 'opt']:
+    elif model_category in ['llama', 'mistral', 'opt', 'gemma']:
         return model.config.max_position_embeddings
 
 
@@ -153,7 +181,7 @@ def get_embedding_layer(model, return_weight=True):
     :return: Module or Weight tensor
     """
     model_category = get_model_category(model)
-    if model_category in ['llama', 'mistral']:
+    if model_category in ['llama', 'mistral', 'gemma']: # gemma
         layer = model.model.embed_tokens
     elif model_category == 'opt':
         layer = model.model.decoder.embed_tokens
@@ -186,7 +214,7 @@ def get_last_transformer_layer(model):
     model_type = get_model_category(model)
     if model_type in ['gpt2', 'gptj']:
         last_layer = model.transformer.h[-1]
-    elif model_type in ['llama', 'mistral']:
+    elif model_type in ['llama', 'mistral', 'gemma']: # gemma
         last_layer = model.model.layers[-1]
     elif model_type == 'opt':
         last_layer = model.model.decoder.layers[-1]
@@ -206,7 +234,7 @@ def is_key(module_name, model_category):
         return 'c_fc' in module_name
     elif model_category == 'gptj':
         return 'fc_in' in module_name
-    elif model_category in ['llama', 'mistral']:
+    elif model_category in ['llama', 'mistral', 'gemma']: # gemma
         return 'up_proj' in module_name
     elif model_category == 'opt':
         return 'fc1' in module_name
@@ -225,7 +253,7 @@ def is_value(module_name, model_category):
         return 'c_proj' in module_name
     elif model_category == 'gptj':
         return 'fc_out' in module_name
-    elif model_category in ['llama', 'mistral']:
+    elif model_category in ['llama', 'mistral', 'gemma']:
         return 'down_proj' in module_name
     elif model_category == 'opt':
         return 'fc2' in module_name
@@ -240,7 +268,7 @@ def get_layer_num(module_name, model_category):
     :param model_category: Type of model, str
     :return: Layer number, int
     """
-    if model_category in ['gpt2', 'llama', 'mistral', 'gptj']:
+    if model_category in ['gpt2', 'llama', 'mistral', 'gptj', 'gemma']:
         return int(module_name.split('.')[2])
     elif model_category == 'opt':
         return int(module_name.split('.')[-3])
