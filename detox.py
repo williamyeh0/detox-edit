@@ -61,187 +61,207 @@ class DeToxEdit():
         non_preferred_inputs = self.tokenizer(non_preferred_data, return_tensors="pt", padding=True, truncation=True, max_length=128)  # 128, 37
         return preferred_inputs, non_preferred_inputs
 
+    # @torch.no_grad()
+    # def _update_causal_mask_fake(
+    #     self,
+    #     attention_mask: torch.Tensor,
+    #     input_tensor: torch.Tensor,
+    #     cache_position: torch.Tensor,
+    #     past_key_values: HybridCache,
+    #     output_attentions: bool,
+    # ):
+    #     # Flash Attention currently doesn't support static cache but Gemma2 work only with static cache.
+    #     # So we will pass in attention mask as is in any case, not only when ther's padding. Then we'll use its shape
+    #     # to cut out keys/values trailing 0 used in static cache. This workaround should be compile compatible
+    #     # as it doesn't cause dynamic control issues.
+    #     if self.config._attn_implementation == "flash_attention_2":
+    #         return attention_mask
 
-    # def _get_hidden_sentence_embeddings(self, inputs):
-    #     inputs = inputs.to(self.model.device)
-    #     input_ids = inputs.input_ids
-    #     attention_mask = inputs.attention_mask
+    #     dtype, device = input_tensor.dtype, input_tensor.device
+    #     sequence_length = input_tensor.shape[1]
+    #     if isinstance(past_key_values, (HybridCache, StaticCache)):
+    #         target_length = past_key_values.get_max_cache_shape()
+    #     else:
+    #         target_length = attention_mask.shape[-1] if attention_mask is not None else input_tensor.shape[1]
 
-    #     batch_size = min(50, input_ids.size(0))
-    #     num_batches = inputs.input_ids.size(0) // batch_size
-    #     sent_embs = []
+    #     # In case the provided `attention` mask is 2D, we generate a causal mask here (4D).
+    #     causal_mask = self._prepare_4d_causal_attention_mask_with_cache_position(
+    #         attention_mask,
+    #         sequence_length=sequence_length,
+    #         target_length=target_length,
+    #         dtype=dtype,
+    #         device=device,
+    #         cache_position=cache_position,
+    #         batch_size=input_tensor.shape[0],
+    #     )
+    #     return causal_mask
 
-    #     for i in range(num_batches):
-    #         batch_input_ids = input_ids[i * batch_size: (i + 1) * batch_size]
-    #         batch_attention_mask = attention_mask[i * batch_size: (i + 1) * batch_size]
-    #         logging.info(f'Batch {i + 1}/{num_batches} of size {batch_input_ids.size(0)}')
+    # @staticmethod
+    # def _prepare_4d_causal_attention_mask_with_cache_position_fake(
+    #     attention_mask: torch.Tensor,
+    #     sequence_length: int,
+    #     target_length: int,
+    #     dtype: torch.dtype,
+    #     device: torch.device,
+    #     cache_position: torch.Tensor,
+    #     batch_size: int,
+    #     **kwargs,
+    # ):
+    #     """
+    #     Creates a causal 4D mask of shape `(batch_size, 1, query_length, key_value_length)` from a 2D mask of shape
+    #     `(batch_size, key_value_length)`, or if the input `attention_mask` is already 4D, do nothing.
 
-    #         with torch.no_grad():
-    #             outputs = self.model(input_ids=batch_input_ids, attention_mask=batch_attention_mask, output_hidden_states=True)
-    #             hidden_states = outputs.hidden_states  # Tuple of len L tensors: (N, seq_len, D)
-    #         del outputs
-    #         hidden_states = hidden_states[1:]  # Remove the input layer embeddings
-    #         hidden_states = torch.stack(hidden_states)  # (L, N, seq_len, D)
-
-    #         last_layer = get_last_transformer_layer(self.model)
-    #         penultimate_layer_embedding = hidden_states[-2]  # (N, seq_len, D)
-
-    #         if self.model_category in ['gpt2', 'mistral', 'opt']:
-    #             last_layer_emb = last_layer(penultimate_layer_embedding)[0]  # (N, seq_len, D)
-    #         elif self.model_category in ['llama']: # gemma here?
-    #             inputs_embeds = self.model.model.embed_tokens(batch_input_ids)
-    #             past_seen_tokens = 0
-    #             cache_position = torch.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device)
-    #             # output_attentions arg
-    #             causal_mask = self.model.model._update_causal_mask(batch_attention_mask, 
-    #                                                                inputs_embeds, 
-    #                                                                cache_position, 
-    #                                                                past_seen_tokens)
-    #             position_ids = cache_position.unsqueeze(0)
-    #             last_layer_emb = last_layer(
-    #                 penultimate_layer_embedding,
-    #                 attention_mask=causal_mask,
-    #                 position_ids=position_ids,
-    #             )[0]
-    #             # Generate proper position embeddings for Gemma
-    #         elif self.model_category in ['gemma']:
-    #             # position_ids = self.model.model.embed_positions(batch_input_ids)
-    #             # position_embeddings = self.model.model.embed_positions(position_ids)
-                
-    #             # # Combine with input embeddings
-    #             # hidden_states = inputs_embeds + position_embeddings
-                
-    #             # # Create causal mask
-    #             # causal_mask = self.model.model._update_causal_mask(
-    #             #     batch_attention_mask,
-    #             #     hidden_states,
-    #             #     torch.arange(hidden_states.shape[1], device=hidden_states.device),
-    #             #     past_seen_tokens,
-    #             #     output_attentions=False
-    #             # )
-                
-    #             # last_layer_emb = last_layer(
-    #             #     penultimate_layer_embedding,
-    #             #     attention_mask=causal_mask,
-    #             #     position_ids=position_ids,
-    #             # )[0]
-    #             inputs_embeds = self.model.model.embed_tokens(batch_input_ids)
-                
-    #             # Generate position IDs for Gemma
-    #             seq_length = inputs_embeds.size(1)
-    #             position_ids = torch.arange(
-    #                 seq_length, 
-    #                 dtype=torch.long,
-    #                 device=inputs_embeds.device
-    #             ).unsqueeze(0).expand_as(batch_input_ids)
-                
-    #             # Create causal mask
-    #             causal_mask = self.model.model._update_causal_mask(
-    #                 batch_attention_mask,
-    #                 inputs_embeds,
-    #                 position_ids,
-    #                 past_key_values=0,
-    #                 output_attentions=False
+    #     Args:
+    #         attention_mask (`torch.Tensor`):
+    #             A 2D attention mask of shape `(batch_size, key_value_length)` or a 4D attention mask of shape
+    #             `(batch_size, 1, query_length, key_value_length)`.
+    #         sequence_length (`int`):
+    #             The sequence length being processed.
+    #         target_length (`int`):
+    #             The target length: when generating with static cache, the mask should be as long as the static cache,
+    #             to account for the 0 padding, the part of the cache that is not filled yet.
+    #         dtype (`torch.dtype`):
+    #             The dtype to use for the 4D attention mask.
+    #         device (`torch.device`):
+    #             The device to plcae the 4D attention mask on.
+    #         cache_position (`torch.Tensor`):
+    #             Indices depicting the position of the input sequence tokens in the sequence.
+    #         batch_size (`torch.Tensor`):
+    #             Batch size.
+    #     """
+    #     if attention_mask is not None and attention_mask.dim() == 4:
+    #         # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
+    #         causal_mask = attention_mask
+    #     else:
+    #         min_dtype = torch.finfo(dtype).min
+    #         causal_mask = torch.full(
+    #             (sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device
+    #         )
+    #         if sequence_length != 1:
+    #             causal_mask = torch.triu(causal_mask, diagonal=1)
+    #         causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
+    #         causal_mask = causal_mask[None, None, :, :].expand(batch_size, 1, -1, -1)
+    #         if attention_mask is not None:
+    #             causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
+    #             mask_length = attention_mask.shape[-1]
+    #             padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :].to(
+    #                 causal_mask.device
     #             )
-                
-    #             last_layer_emb = last_layer(
-    #                 penultimate_layer_embedding,
-    #                 attention_mask=causal_mask,
-    #                 position_ids=position_ids,
-    #             )[0]
-    #         elif self.model_category == 'gptj':
-    #             last_layer_emb = hidden_states[-1]
-    #         else:
-    #             raise NotImplementedError(f'Model category not recognized: {self.model_category}')
-    #         hidden_states[-1] = last_layer_emb
-
-    #         hidden_sent_embs = torch.mean(hidden_states, dim=2)  # (L, N, D)
-    #         sent_embs.append(hidden_sent_embs.detach().to('cpu'))
-    #         del hidden_sent_embs, hidden_states
-    #         torch.cuda.empty_cache()
-
-    #     # sent_embs is a list of tensors of shape (L, N, D). Concatenate them along the batch dimension
-    #     hidden_sent_embs = torch.cat(sent_embs, dim=1)  # (L, N, D)
-    #     del sent_embs
-    #     logging.info(f'Hidden sent: {hidden_sent_embs.shape}')
-    #     torch.cuda.empty_cache()
-    #     return hidden_sent_embs
-
-    def _get_hidden_sentence_embeddings(self, input_dict):
-        input_ids = input_dict["input_ids"]
-        attention_mask = input_dict["attention_mask"]
-        attention_mask = attention_mask.to(dtype=torch.float32, device = self.model.device) # to float32 force
-        print(f"Mask dtype: {attention_mask.dtype, attention_mask.shape}, Model dtype: {self.model.dtype}")  # Debug dtype
-        batch_size, seq_length = input_ids.shape
-        print(f"Input IDs shape: {input_ids.shape}")  # Debug shapes
-
-        # Generate proper position IDs for all sequences
-        position_ids = torch.arange(0, seq_length, dtype=torch.long, device=input_ids.device)
-        position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)
-        print(f"Position IDs shape: {position_ids.shape}")
-
-        # Create cache position tensor matching sequence length
-        cache_position = torch.arange(
-            seq_length,
-            device=input_ids.device,
-            dtype=torch.long
-        ).repeat(batch_size, 1)
-        print(f"Cache position shape: {cache_position.shape}")
-
-        # Create causal mask with proper dimensions
-        past_key_values = 0
-        causal_mask = self.model.model._update_causal_mask(
-            attention_mask,
-            input_ids,
-            cache_position,
-            past_key_values,
-            # position_ids,
-            output_attentions=False
-        )
-        causal_mask = causal_mask.to(self.model.dtype) # back to float16
-        print(f"Causal mask shape: {causal_mask.shape}, dtype: {causal_mask.dtype}")
-
-        # causal_mask = self.model.model._update_causal_mask(
-    #             #     batch_attention_mask,
-    #             #     hidden_states,
-    #             #     torch.arange(hidden_states.shape[1], device=hidden_states.device),
-    #             #     past_seen_tokens,
-    #             #     output_attentions=False
-    #             # )
-
-        # Get hidden states with proper mask handling
-        with torch.inference_mode():
-            outputs = self.model.model(
-                input_ids.to(self.model.device),
-                attention_mask,
-                position_ids,
-                causal_mask,
-                output_hidden_states=True,
-                return_dict=True
-            )
-            #             # Create causal mask
-    #             causal_mask = self.model.model._update_causal_mask(
-    #                 batch_attention_mask,
-    #                 inputs_embeds,
-    #                 position_ids,
-    #                 past_key_values=0,
-    #                 output_attentions=False
+    #             padding_mask = padding_mask == 0
+    #             causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
+    #                 padding_mask, min_dtype
     #             )
+
+    #     return causal_mask
+
+
+    def _get_hidden_sentence_embeddings(self, inputs):
+        # print(f'get_hidden_sentence_embeddings(): hidden sent embeddings for {self.model_category}')
+        inputs = inputs.to(self.model.device)
+        input_ids = inputs.input_ids.to(dtype=torch.long)
+        attention_mask = inputs.attention_mask
+
+        batch_size = min(50, input_ids.size(0))
+        if (self.model_category in ['gemma']):
+            batch_size = 1 # no batching
+        num_batches = inputs.input_ids.size(0) // batch_size
+        sent_embs = []
+        # print(f'batch size: {batch_size}')
+        # print(f'num batches: {num_batches}')
+
+        for i in range(num_batches):
+            batch_input_ids = input_ids[i * batch_size: (i + 1) * batch_size]
+            batch_attention_mask = attention_mask[i * batch_size: (i + 1) * batch_size]
+            logging.info(f'Batch {i + 1}/{num_batches} of size {batch_input_ids.size(0)}')
+
+            with torch.no_grad():
+                outputs = self.model(input_ids=batch_input_ids, attention_mask=batch_attention_mask, output_hidden_states=True)
+                hidden_states = outputs.hidden_states  # Tuple of len L tensors: (N, seq_len, D)
+            del outputs
+            hidden_states = hidden_states[1:]  # Remove the input layer embeddings
+            hidden_states = torch.stack(hidden_states)  # (L, N, seq_len, D)
+
+            last_layer = get_last_transformer_layer(self.model)
+            penultimate_layer_embedding = hidden_states[-2]  # (N, seq_len, D)
+            # view model
+            # print(f'gemma model attributes: {dir(self.model)}')
+            # print(f'gemma model config: {self.model.config}')
+
+            # print(f'hidden states: {hidden_states.shape, hidden_states[0]}')
+            # print(f'last_layer: {last_layer}')
+            # print(f'penultimate_layer_embedding: {penultimate_layer_embedding.shape, penultimate_layer_embedding[0]}')
+            if self.model_category in ['gpt2', 'mistral', 'opt']:
+                last_layer_emb = last_layer(penultimate_layer_embedding)[0]  # (N, seq_len, D)
+            elif self.model_category in ['llama']: # gemma here?
+                inputs_embeds = self.model.model.embed_tokens(batch_input_ids)
+                past_seen_tokens = 0
+                cache_position = torch.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device)
+                # output_attentions arg
+                causal_mask = self.model.model._update_causal_mask(batch_attention_mask, 
+                                                                   inputs_embeds, 
+                                                                   cache_position, 
+                                                                   past_seen_tokens)
+                position_ids = cache_position.unsqueeze(0)
+                last_layer_emb = last_layer(
+                    penultimate_layer_embedding,
+                    attention_mask=causal_mask,
+                    position_ids=position_ids,
+                )[0]
+                # Generate proper position embeddings for Gemma
+            elif self.model_category in ['gemma']:
+                inputs_embeds = self.model.model.embed_tokens(batch_input_ids)
                 
-    #             last_layer_emb = last_layer(
-    #                 penultimate_layer_embedding,
-    #                 attention_mask=causal_mask,
-    #                 position_ids=position_ids,
-    #             )[0]
+                # Generate position IDs for Gemma
+                seq_length = inputs_embeds.size(1)
+                position_ids = torch.arange(
+                    seq_length, 
+                    dtype=torch.long,
+                    device=inputs_embeds.device
+                ).unsqueeze(0).expand(batch_input_ids.size(0), -1) # explicit
+                # cache_position = torch.arange(seq_length, device=inputs_embeds.device).unsqueeze(0).expand(batch_input_ids.size(0), -1)
 
-        # Extract and stack hidden states across layers
-        hidden_states = torch.stack(
-            [hidden_state[:, -1, :] for hidden_state in outputs.hidden_states],  # Get last token embeddings
-            dim=1  # Stack along layer dimension (L, N, D)
-        )
-        
-        return hidden_states
 
+                # print(f'batch_attention_mask: {batch_attention_mask.shape, batch_attention_mask[0]}')
+                # print(f'inputs_embeds: {inputs_embeds.shape, inputs_embeds[0]}')
+                # print(f'position_ids: {position_ids.shape, position_ids[0]}')
+                # print(f'seq_length: {seq_length}')
+
+                causal_mask = self.model.model._update_causal_mask(
+                    batch_attention_mask,
+                    inputs_embeds,
+                    position_ids,
+                    past_key_values=0,
+                    output_attentions=False
+                )
+                rotary_emb = self.model.model.rotary_emb
+                # print(f'rotary_emb: {rotary_emb}')
+                position_embeddings = rotary_emb(inputs_embeds, position_ids=position_ids) # gemma position embeddings rotary
+                # position_embeddings = self.model.model.embed_positions(position_ids)
+                
+                # print(f'position embeddings: {position_embeddings, type(position_embeddings)}') # it's a tuple?
+                last_layer_emb = last_layer(
+                    penultimate_layer_embedding,    
+                    attention_mask=causal_mask,
+                    position_ids=position_ids,
+                    position_embeddings=position_embeddings
+                )[0]
+            elif self.model_category == 'gptj':
+                last_layer_emb = hidden_states[-1]
+            else:
+                raise NotImplementedError(f'Model category not recognized: {self.model_category}')
+            hidden_states[-1] = last_layer_emb
+
+            hidden_sent_embs = torch.mean(hidden_states, dim=2)  # (L, N, D)
+            sent_embs.append(hidden_sent_embs.detach().to('cpu'))
+            del hidden_sent_embs, hidden_states
+            torch.cuda.empty_cache()
+
+        # sent_embs is a list of tensors of shape (L, N, D). Concatenate them along the batch dimension
+        hidden_sent_embs = torch.cat(sent_embs, dim=1)  # (L, N, D)
+        del sent_embs
+        logging.info(f'Hidden sent: {hidden_sent_embs.shape}')
+        torch.cuda.empty_cache()
+        return hidden_sent_embs
 
     def _get_preference_matrix(self):
         preferred_inputs, non_preferred_inputs = self._load_preference_data()
@@ -349,7 +369,7 @@ class DeToxEdit():
                     P_filter = P_filter.to(edited_state_dict[key].device).to(self.model.dtype)
 
                     weight = edited_state_dict[key]
-                    if self.model_category in ['llama', 'mistral', 'opt', 'gptj']:
+                    if self.model_category in ['llama', 'mistral', 'opt', 'gptj', 'gemma']:
                         weight = weight.T
 
                     if edit_keys and is_key(key, self.model_category):
@@ -361,11 +381,13 @@ class DeToxEdit():
                     if torch.allclose(weight, modified_weight) and ('gate_proj' not in key):
                         logging.warning(f'Module {key} not edited after projection.')
 
-                    if self.model_category in ['llama', 'mistral', 'opt', 'gptj']:
+                    if self.model_category in ['llama', 'mistral', 'opt', 'gptj', 'gemma']:
                         modified_weight = modified_weight.T
                     edited_state_dict[key] = modified_weight.to('cuda').contiguous()  # contiguous for saving to disk
 
         self.model.load_state_dict(edited_state_dict, assign=True)
+        if self.model_category in ['gemma']:
+            self.model.half() # keep it float16
         logging.info('Edited model created.')
         return self.model
 

@@ -13,6 +13,10 @@ from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 logging.getLogger().setLevel(logging.INFO)
 # torch._dynamo.config.suppress_errors = True
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.config.disable = True
+torch.set_grad_enabled(False)
 
 
 
@@ -49,7 +53,7 @@ def load_large_model(model_id, quantize=False, add_peft=False, hf_token=None):
     # dtype = torch.float32 if model_id == 'gpt2' else torch.float16
     print(f"HF_TOKEN exists: {'HF_TOKEN' in os.environ}")
     print(f"Token validity: {bool(os.environ.get('HF_TOKEN'))}")
-    print(f'token: {hf_token}') # lol empty?
+    # print(f'token: {hf_token}') # lol empty?
     tokenizer = AutoTokenizer.from_pretrained(model_path, model_max_length=512,
                                               cache_dir=os.path.join(os.environ['HF_HOME'], 'hub'), token=hf_token)
 

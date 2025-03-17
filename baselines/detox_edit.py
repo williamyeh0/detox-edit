@@ -20,6 +20,10 @@ from detox import DeToxEdit
 from utils.model_utils import load_large_model
 from evaluation.evaluate_model import evaluate_model
 from evaluation.win_rate import calculate_win_rate
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.config.disable = True
+torch.set_grad_enabled(False)
 
 
 # Read configs - finding the toxic subspace
@@ -52,11 +56,12 @@ return_sample_generations = config.getboolean('Evaluation', 'return_sample_gener
 model_id = config.get('Model', 'model_name')
 model, tokenizer = load_large_model(model_id)
 
-# if toxicity_task:
-#     # evaluate original models' perplexity and toxicity
-#     ppl_original, tox_original = evaluate_model(model, tokenizer,
-#                    return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations)
-#     logging.info(f'{model_id} - Original Perplexity: {ppl_original}, Original Toxicity: {tox_original}')
+"""evaluate original model's perplexity and toxicity"""
+if toxicity_task:
+    # evaluate original models' perplexity and toxicity
+    ppl_original, tox_original = evaluate_model(model, tokenizer,
+                   return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations)
+    logging.info(f'{model_id} - Original Perplexity: {ppl_original}, Original Toxicity: {tox_original}')
 
 # Apply edit
 editor = DeToxEdit(model=model, tokenizer=tokenizer,
