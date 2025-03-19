@@ -58,11 +58,12 @@ model_id = config.get('Model', 'model_name')
 model, tokenizer = load_large_model(model_id)
 
 """evaluate original model's perplexity and toxicity"""
-# if toxicity_task:
-#     # evaluate original models' perplexity and toxicity
-#     ppl_original, tox_original = evaluate_model(model, tokenizer,
-#                    return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations)
-#     logging.info(f'{model_id} - Original Perplexity: {ppl_original}, Original Toxicity: {tox_original}')
+if toxicity_task:
+    logging.info('Evaluating Original Perplexity and Toxicity...')
+    # evaluate original models' perplexity and toxicity
+    ppl_original, tox_original = evaluate_model(model, tokenizer,
+                   return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations, save_generations=False)
+    logging.info(f'{model_id} - Original Perplexity: {ppl_original}, Original Toxicity: {tox_original}')
 
 # Apply edit
 editor = DeToxEdit(model=model, tokenizer=tokenizer,
@@ -88,7 +89,7 @@ if save_edited_model:
 # However, when editing for harmfulness (where we don't have a scoring API), we instead measure GPT-4 win rate.
 """generations"""
 
-logging.info('Perplexity and Toxicity generations...')
+logging.info('Evaluating Edited Perplexity and Toxicity...')
 # evaluate edited model's perplexity and toxicity
 ppl, tox = evaluate_model(edited_model, tokenizer,
                 return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations, save_generations=True)
