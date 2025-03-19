@@ -3,6 +3,7 @@ import sys
 import logging
 import inspect
 import argparse
+import json
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0, parentdir)
@@ -18,7 +19,7 @@ config = main(config_filename=config_filename)
 import numpy as np
 from detox import DeToxEdit
 from utils.model_utils import load_large_model
-from evaluation.evaluate_model import evaluate_model
+from evaluation.evaluate_model import evaluate_model, load_toxicity_prompts, load_wiki_data, perplexity_over_dataset, toxicity_over_dataset
 from evaluation.win_rate import calculate_win_rate
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
@@ -57,11 +58,11 @@ model_id = config.get('Model', 'model_name')
 model, tokenizer = load_large_model(model_id)
 
 """evaluate original model's perplexity and toxicity"""
-if toxicity_task:
-    # evaluate original models' perplexity and toxicity
-    ppl_original, tox_original = evaluate_model(model, tokenizer,
-                   return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations)
-    logging.info(f'{model_id} - Original Perplexity: {ppl_original}, Original Toxicity: {tox_original}')
+# if toxicity_task:
+#     # evaluate original models' perplexity and toxicity
+#     ppl_original, tox_original = evaluate_model(model, tokenizer,
+#                    return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations)
+#     logging.info(f'{model_id} - Original Perplexity: {ppl_original}, Original Toxicity: {tox_original}')
 
 # Apply edit
 editor = DeToxEdit(model=model, tokenizer=tokenizer,
@@ -85,17 +86,25 @@ if save_edited_model:
 # Evaluate the edited model
 # When editing for toxicity, we measure the perplexity and toxicity.
 # However, when editing for harmfulness (where we don't have a scoring API), we instead measure GPT-4 win rate.
-if toxicity_task:
-    logging.info('Evaluating perplexity and toxicity...')
-    # evaluate edited model's perplexity and toxicity
-    ppl, tox = evaluate_model(edited_model, tokenizer,
-                   return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations)
-    logging.info(f'{model_id} - Edited Perplexity: {ppl}, Edited Toxicity: {tox}')
+"""generations"""
 
-else:
-    logging.info('Evaluating win-rate over the base model...')
-    model_1, _ = load_large_model(model_id)
-    win_rate = calculate_win_rate(model_1=model_1, model_2=edited_model, tokenizer=tokenizer,
-                                  dataset_name=harmful_dataset, harm_category=harm_category,
-                                  num_eval_dps=5, max_new_tokens=100)
-    logging.info(f'{model_id} - Win-rate: {win_rate}')
+logging.info('Perplexity and Toxicity generations...')
+# evaluate edited model's perplexity and toxicity
+ppl, tox = evaluate_model(edited_model, tokenizer,
+                return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations, save_generations=True)
+logging.info(f'{model_id} - Edited Perplexity: {ppl}, Edited Toxicity: {tox}')
+
+# if toxicity_task:
+#     logging.info('Evaluating perplexity and toxicity...')
+#     # evaluate edited model's perplexity and toxicity
+#     ppl, tox = evaluate_model(edited_model, tokenizer,
+#                    return_perplexity=return_perplexity, return_toxicity=return_toxicity, display_gen=return_sample_generations)
+#     logging.info(f'{model_id} - Edited Perplexity: {ppl}, Edited Toxicity: {tox}')
+
+# else:
+#     logging.info('Evaluating win-rate over the base model...')
+#     model_1, _ = load_large_model(model_id)
+#     win_rate = calculate_win_rate(model_1=model_1, model_2=edited_model, tokenizer=tokenizer,
+#                                   dataset_name=harmful_dataset, harm_category=harm_category,
+#                                   num_eval_dps=5, max_new_tokens=100)
+#     logging.info(f'{model_id} - Win-rate: {win_rate}')

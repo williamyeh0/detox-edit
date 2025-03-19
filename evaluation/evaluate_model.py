@@ -10,7 +10,7 @@ import logging
 import numpy as np
 from tqdm import tqdm
 from detoxify import Detoxify
-from utils.model_utils import get_model_max_len
+from utils.model_utils import get_model_max_len, get_model_category
 from more_itertools import chunked  # Add this import
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
@@ -278,7 +278,7 @@ def perplexity_over_dataset(model, tokenizer, text_samples):
     ppl = torch.exp(torch.tensor(total_nll / total_tokens)).item()
     return ppl
 
-def toxicity_over_dataset(model, tokenizer, text_samples):
+def toxicity_over_dataset_OLD(model, tokenizer, text_samples):
     '''
     Calculate toxicity of model generations using the Detoxify API
     :param model: Huggingface model
@@ -302,17 +302,10 @@ def toxicity_over_dataset(model, tokenizer, text_samples):
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
         response = model.generate(
             input_ids=input_ids, 
-            max_new_tokens=10,
+            max_new_tokens=20,
             pad_token_id=tokenizer.pad_token_id
             # , compiled=False if hasattr(torch, 'compile') else None
         )
-        # with torch._dynamo.disable():  # Add this context manager
-        #     response = model.generate(
-        #         input_ids=input_ids, 
-        #         max_new_tokens=10,
-        #         pad_token_id=tokenizer.pad_token_id
-        #     )
-        # response = model.generate(input_ids=input_ids, max_new_tokens=10, pad_token_id=tokenizer.pad_token_id)   # (1, response_len)
 
         # We only want to measure toxicity for the generation, excluding the prompt
         response = response[0, len(input_ids[0]):].tolist()  # (response_len, ) list
@@ -320,6 +313,56 @@ def toxicity_over_dataset(model, tokenizer, text_samples):
 
         toxic_scores.append(toxicity_scorer.predict(response)['toxicity'])
 
+    toxic_score_mean = np.mean(toxic_scores)
+    logging.info(f'{len(toxic_scores)}/{len(text_samples)} samples successfully processed.')
+    return toxic_score_mean
+
+def toxicity_over_dataset(model, tokenizer, text_samples, save_generations=True):
+    '''
+    Save generations and Detoxify scores to json. basically toxicity_over_dataset but saves to json now
+    :param model: Huggingface model
+    :param tokenizer: Huggingface tokenizer
+    :param text_samples: List of prompts to generate from
+    :return: Toxicity score, float
+    '''
+    toxic_scores = []
+    toxicity_scorer = Detoxify('original', device=model.device)
+    model_category = get_model_category(model)
+    
+    output_file_path = f'results/{model_category}_toxicity_scores.jsonl' # name it
+    if save_generations:
+        with open(output_file_path, 'a') as output_file:
+            for prompt in tqdm(text_samples):
+                toxicity_scores = {"prompt": prompt} # return
+                input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+                response = model.generate(
+                    input_ids=input_ids, 
+                    max_new_tokens=20,
+                    pad_token_id=tokenizer.pad_token_id
+                )
+                # We only want to measure toxicity for the generation, excluding the prompt
+                response = response[0, len(input_ids[0]):].tolist()  # (response_len, ) list
+                response = tokenizer.decode(response).strip()        # str
+                toxic_scores.append(toxicity_scorer.predict(response)['toxicity'])
+                toxicity_scores['generated_text'] = response
+                # toxicity_scores['toxicity_scores'] = toxicity_scorer.predict(response)
+                toxicity_scores['toxicity_scores'] = {k: float(v) for k, v in toxicity_scorer.predict(response).items()} # convert to float64, can't be float32
+                
+                output_file.write(json.dumps(toxicity_scores) + '\n')
+                output_file.flush() 
+    else:
+        for prompt in tqdm(text_samples):
+            input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+            response = model.generate(
+                input_ids=input_ids, 
+                max_new_tokens=20,
+                pad_token_id=tokenizer.pad_token_id
+            )
+            # We only want to measure toxicity for the generation, excluding the prompt
+            response = response[0, len(input_ids[0]):].tolist()  # (response_len, ) list
+            response = tokenizer.decode(response).strip()        # str
+            toxic_scores.append(toxicity_scorer.predict(response)['toxicity'])
+    # output_file.close()
     toxic_score_mean = np.mean(toxic_scores)
     logging.info(f'{len(toxic_scores)}/{len(text_samples)} samples successfully processed.')
     return toxic_score_mean
@@ -349,7 +392,7 @@ def display_generations(model, tokenizer, prompt_list, return_generations=False)
     if return_generations:
         return generations
 
-def evaluate_model(model, tokenizer, return_toxicity=True, return_perplexity=True, display_gen=True, prompts=None):
+def evaluate_model(model, tokenizer, return_toxicity=True, return_perplexity=True, display_gen=True, prompts=None, save_generations=False):
     """
     Evaluate a model on toxicity, perplexity and sample generations.
     :param model: Huggingface model
@@ -382,15 +425,15 @@ def evaluate_model(model, tokenizer, return_toxicity=True, return_perplexity=Tru
 
     model.eval()
     ppl, tox = None, None
-    wiki_samples = load_wiki_data()
+    # wiki_samples = load_wiki_data()
     challenge_prompts = load_toxicity_prompts()
 
     if return_toxicity:
-        tox = toxicity_over_dataset(model, tokenizer, challenge_prompts)
+        tox = toxicity_over_dataset(model, tokenizer, challenge_prompts, save_generations)
         logging.info(f'Toxicity scores (%): {100 * tox}')
-    if return_perplexity:
-        ppl = perplexity_over_dataset(model, tokenizer, wiki_samples)
-        logging.info(f'Perplexity: {ppl}')
+    # if return_perplexity:
+    #     ppl = perplexity_over_dataset(model, tokenizer, wiki_samples)
+    #     logging.info(f'Perplexity: {ppl}')
     print('evaluate_model(): model dtype {model.dtype}')
     if display_gen:
         display_generations(model=model, tokenizer=tokenizer, prompt_list=prompts)
