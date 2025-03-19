@@ -4,25 +4,24 @@
 
 ### Setup
 
-- Create a virtual environment with python 3.9, using `requirements.txt`
+- Create a virtual environment with python 3.11, using `requirements.txt`. (Gemma-2-2B was getting torch dynamo errors on 3.9)
   ````
-  conda create -n <env_name> python=3.9
+  conda create -n <env_name> python=3.11
   conda activate <env_name>
   pip install -r requirements.txt
   ````
 
-- Depnding on which model you want to run, pick the corresponding config file in `configs/`. Then change the filepaths in your config file to match your local setup.
-
+- Depending on which model you want to run, pick the corresponding config file in `configs/`. Then change the filepaths in your config file to match your local setup.
 
 ### Editing the Model
 - Edit the config file to set the parameters for the projection edit method.
    - `cuda_visible_devices` is a comma-separated list of GPU ids to use.
    - Model configurations:
-     - `model_name`: Currently supports `gpt2`, `mistral`, `zephyr-sft`, `opt`, `gptj`
+     - `model_name`: Currently supports `gpt2-small`, `gpt2-medium`, `mistral`, `zephyr-sft`, `opt`, `gptj`, `gemma-2-2b`
      - `save_edited_model`: If True, saves the edited model. 
      - `save_model_name`: Str
    - Dataset configurations:
-     - `toxicity_task`: If False, aligns to a harmlesness dataset with multiple preferences, instead of the toxicity preference data.
+     - `toxicity_task`: If False, aligns to a harmlesness dataset with multiple preferences, instead of the toxicity preference data. 
      - `harmful_dataset`: Either [`Safe-RLHF`](https://huggingface.co/datasets/PKU-Alignment/PKU-SafeRLHF)  or [`HH-Golden`](https://huggingface.co/datasets/nz/anthropic-hh-golden-rlhf)
      - `harm_category`: For `Safe-RLHF` dataset only. Specifies which kind of harm preference to edit for.
    - Configurations to find P_toxic:
